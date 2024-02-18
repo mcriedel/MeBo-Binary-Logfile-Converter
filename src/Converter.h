@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QString>
 #include <QFileInfo>
+#include "math.h"
 
 // Aux struct to save the footprint of each sensor as defined by the header of a logfile
 struct Sensor {
@@ -135,6 +136,7 @@ private:
     inline QString getLogLine(QByteArray data, const QList<Sensor>& sensors, int sensor_index);
     inline bool convert_file(QString file_str, QString output_dir);
     inline void append_error_string_list(QString error);
+    inline bool convert_file_to_euler(QString infile);
 
 signals:
     void separatorChanged();
@@ -259,9 +261,13 @@ bool Converter::convert_file(QString file_str, QString output_dir)
     }
 
     // create the output file
-    QString out_file_str = output_dir+"/"+input_file.baseName()+".csv";
+    QString output_file_base = input_file.baseName();
+    if(convert_to_euler){
+        // mark the file as tmp for euler angle conversion
+        output_file_base += "_tmp";
+    }
+    QString out_file_str = output_dir+"/"+output_file_base+".csv";
     QFile output_file(out_file_str);
-    // TODO: Convert to euler xXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXx
     // write header: 1st line: sensors, 2nd line: sensor data
     QString csv_header_ln1 = "time";
     QString csv_header_ln2 = "time [ms]";
@@ -332,6 +338,11 @@ bool Converter::convert_file(QString file_str, QString output_dir)
     in_file.close();
     output_file.close();
 
+    if(convert_to_euler){
+        // start euler angle conversion
+        return convert_file_to_euler(out_file_str);
+    }
+
     return true;
 }
 
@@ -371,6 +382,89 @@ void Converter::append_error_string_list(QString error)
 {
     errorStrings.append(error);
     emit errorStringChanged();
+}
+
+bool Converter::convert_file_to_euler(QString infile){
+    // load file
+    QFile input_file = QFile(infile);
+    if(!input_file.open(QIODevice::ReadOnly)){
+        append_error_string_list("Cannot open file '"+ infile +"' for Euler angle conversion");
+        return false;
+    }
+
+    // read the two header lines and check if IMU data is in there and save the quaternion position
+    QString header_1 = input_file.readLine();
+    QString header_2 = input_file.readLine();
+    QStringList entries_1 = header_1.replace("\n", "").split(separator);
+    QStringList entries_2 = header_2.replace("\n", "").split(separator);
+    if(!entries_1.contains("IMU")){
+        //no imu data available, skip file
+        input_file.close();
+        input_file.rename(infile.replace("_tmp.csv", ".csv"));
+        return true;
+    }
+    unsigned int quat_pos = -1;
+    for(unsigned int i = 0; i<entries_2.size(); i++){
+        if(entries_2[i] == "q1 [NED]"){
+            quat_pos = i;
+            // rename to euler angles
+            entries_2[i] = "phi [deg]";
+            entries_2[i+1] = "theta [deg]";
+            entries_2[i+2] = "psi [deg]";
+            // remove the 4th entry as it is not needed anymore
+            entries_2.removeAt(i+3);
+            entries_1.removeAt(i+3);
+            break;
+        }
+    }
+
+    // create output file
+    // remove the tmp specifier from the file to convert
+    QFile output_file = QFile(infile.replace("_tmp.csv", ".csv"));
+    if(!output_file.open(QIODevice::WriteOnly)){
+        append_error_string_list("Cannot create output file '"+ infile.replace("_tmp.csv", ".csv") +"' for Euler angle conversion");
+        input_file.close();
+        return false;
+    }
+    QTextStream out(&output_file);
+    out<<entries_1.join(separator)<<"\n"<<entries_2.join(separator)<<"\n";
+
+    // convert to euler angles
+    while(!input_file.atEnd()){
+        QString line = input_file.readLine();
+        QStringList values = line.replace("\n", "").split(separator);
+        // check, if the entry is an imu entry by checking if data is defined at the corresponding position
+        if(!values[quat_pos].isEmpty()){
+            // found a quaternion; start conversion
+            double q1 = values[quat_pos].toDouble();
+            double q2 = values[quat_pos+1].toDouble();
+            double q3 = values[quat_pos+2].toDouble();
+            double q4 = values[quat_pos+3].toDouble();
+
+            double phi = std::atan2(2*(q1*q2+q3*q4), 1-2*(q2*q2+q3*q3))*180./M_PI;
+            double theta = 2.*std::atan2(std::sqrt(1+2*(q1*q3-q2*q4)), std::sqrt(1-2*(q1*q3-q2*q4)))-M_PI/2.;
+            theta *= 180./M_PI;
+            double psi = std::atan2(2*(q1*q4+q2*q3), 1-2*(q3*q3+q4*q4))*180./M_PI;
+
+            // override the quaternion values
+            values[quat_pos] = QString::number(phi);
+            values[quat_pos+1] = QString::number(theta);
+            values[quat_pos+2] = QString::number(psi);
+        }
+        // remove the additional entry for all sensor data
+        values.removeAt(quat_pos+3);
+
+        // write to file
+        out<<values.join(separator)<<"\n";
+    }
+
+    input_file.close();
+    output_file.close();
+
+    // delete the temporary file
+    input_file.remove();
+
+    return true;
 }
 
 #endif // CONVERTER_H

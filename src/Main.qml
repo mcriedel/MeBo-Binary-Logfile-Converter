@@ -212,6 +212,7 @@ ApplicationWindow {
                 Switch {
                     text: qsTr("Convert to euler angles")
                     checked: conv.convert_to_euler
+                    onCheckedChanged: conv.convert_to_euler = checked
                 }
 
                 HorizontalSpacer{}
