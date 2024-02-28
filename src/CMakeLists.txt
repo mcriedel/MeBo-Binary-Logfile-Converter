@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 project(Mebo_MK3_Converter VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
+#set(CMAKE_PREFIX_PATH "D:/Qt/6.6.2/msvc2022_64_static")
 find_package(Qt6 6.4 REQUIRED COMPONENTS Quick)
 
 qt_standard_project_setup()
